@@ -67,3 +67,16 @@ llm = { model = "qwen3-4b-q4_k_m", n_gpu_layers = 0, ctx_size = 4096, parallel =
 analysis_concurrency = 1
 heavy_stages_exclusive = true
 realtime_claim = "real-time НЕ гарантируется; реплики с задержкой; поручения появляются только после встречи"
+
+[profiles.gpu-server]
+description = "Удалённый/серверный GPU >= 24 ГБ VRAM (например Brev): large-v3 для финального прохода, Qwen3-14B, контекст 8192"
+live_analysis = true
+min_vram_mib = 20000
+min_ram_total_gib = 32
+live_asr = { model = "whisper-large-v3-turbo-ct2", device = "cuda", compute_type = "float16", step_s = 1.0, max_window_s = 20.0, beam_size = 1 }
+final_asr = { model = "whisper-large-v3-ct2", device = "cuda", compute_type = "float16", beam_size = 5 }
+diarization = { model = "pyannote-community-1", device = "cuda", run_exclusive = false }
+llm = { model = "qwen3-14b-q4_k_m", n_gpu_layers = 99, ctx_size = 8192, parallel = 1 }
+analysis_concurrency = 1
+heavy_stages_exclusive = false
+realtime_claim = "не измерено на этом сервере — проверьте python tasks.py doctor --asr-test"
