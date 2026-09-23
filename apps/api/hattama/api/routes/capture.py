@@ -22,7 +22,7 @@ from hattama.db.models import (
 )
 from hattama.db.types import utcnow
 from hattama.domain.enums import CaptureMode, CaptureState, MeetingStatus
-from hattama.ingest.service import request_stop
+from hattama.ingest.service import finalize_stop_if_ready, request_stop
 from hattama.security.origins import allowed_extension_origin
 from hattama.security.tokens import hash_token, new_pairing_code, new_token, normalize_pairing_code
 from hattama.services.events import audit, publish
@@ -32,7 +32,7 @@ MAX_PAIRING_ATTEMPTS = 5
 
 
 class CaptureCreateIn(BaseModel):
-    mode: Literal["companion", "local_mic"]
+    mode: Literal["companion", "local_mic", "browser_tab"]
 
 
 class PairingOut(BaseModel):
@@ -163,9 +163,13 @@ def new_pairing_code_route(capture_session_id: str, user: User = Depends(current
 
 
 @router.post("/capture-sessions/{capture_session_id}/stop", response_model=CaptureOut)
-def stop_capture(capture_session_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> CaptureOut:
+def stop_capture(capture_session_id: str, user: User = Depends(current_user), db: Session = Depends(get_db),
+                 settings: Settings = Depends(get_settings)) -> CaptureOut:
     cs = _capture_for(db, user, capture_session_id)
     request_stop(db, cs.id, "user_stop", user.id, "user")
+    # A cancelled permission dialog may leave a session with no open sources. Finish it immediately.
+    if not cs.connected:
+        finalize_stop_if_ready(db, cs.id, settings.stop_grace_s)
     db.flush()
     db.refresh(cs)
     return capture_out(db, cs)

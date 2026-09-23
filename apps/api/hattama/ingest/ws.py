@@ -19,18 +19,6 @@ from typing import Any, TypeVar
 import anyio
 import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
-from pydantic import ValidationError
-from sqlalchemy.orm import Session
-
-from hattama.config import Settings, get_settings
-from hattama.db.models import CaptureSession
-from hattama.db.session import session_scope
-from hattama.domain.enums import CaptureState
-from hattama.ingest import service
-from hattama.ingest.service import IngestAuth, IngestError, OpenedSource
-from hattama.ingest.store import EpochWriter, SequenceTracker
-from hattama.security.origins import ingest_origin_kind
-from hattama.services.events import publish
 from hattama_contracts.frame import FrameError, decode_frame
 from hattama_contracts.messages import (
     Ack,
@@ -52,6 +40,18 @@ from hattama_contracts.messages import (
     Welcome,
     client_message_adapter,
 )
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+
+from hattama.config import Settings, get_settings
+from hattama.db.models import CaptureSession
+from hattama.db.session import session_scope
+from hattama.domain.enums import CaptureState
+from hattama.ingest import service
+from hattama.ingest.service import IngestAuth, IngestError, OpenedSource
+from hattama.ingest.store import EpochWriter, SequenceTracker
+from hattama.security.origins import ingest_origin_kind
+from hattama.services.events import publish
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -125,6 +125,7 @@ class IngestConnection:
         self.origin_kind = origin_kind
         self.auth: IngestAuth | None = None
         self.sources: dict[int, SourceRuntime] = {}
+        self.closed_sources: dict[tuple[int, int], int] = {}
         self.bad_frames = 0
         self.stop_sent = False
         self.closing = False
@@ -185,7 +186,10 @@ class IngestConnection:
         except WebSocketDisconnect:
             pass
         finally:
-            await self._cleanup()
+            # ASGI/TestClient cancels the connection task after disconnect. Durable checkpoints
+            # and registry cleanup must survive that cancellation before another socket resumes.
+            with anyio.CancelScope(shield=True):
+                await self._cleanup()
 
     async def _handshake(self) -> bool:
         try:
@@ -226,8 +230,10 @@ class IngestConnection:
                 log.exception("failed to close epoch writer")
         if self.auth is not None:
             await self._persist_all(force=True)
+            is_current = registry.get(self.auth.capture_session_id) is self
             registry.unregister(self.auth.capture_session_id, self)
-            await run_db(service.mark_disconnected, self.auth, "closed")
+            if is_current:
+                await run_db(service.mark_disconnected, self.auth, "closed")
         self.finished.set()
 
     # ------------------------------------------------------------------ messages
@@ -264,6 +270,16 @@ class IngestConnection:
             opened = await run_db(service.open_source, self.auth, msg, self.settings.max_sources_per_session)
         except IngestError as exc:
             await self.send(ErrorMsg(code=exc.code, message=str(exc), fatal=exc.fatal))
+            return
+        if opened.closed:
+            self.closed_sources[(opened.source_index, msg.capture_epoch)] = opened.durable_sequence
+            await self.send(SourceReady(source_id=msg.source_id, source_index=opened.source_index,
+                                        capture_epoch=msg.capture_epoch,
+                                        resume_from_sequence=opened.durable_sequence + 1,
+                                        durable_sequence=opened.durable_sequence))
+            await self.send(SourceClosed(source_index=opened.source_index, capture_epoch=msg.capture_epoch,
+                                         durable_sequence=opened.durable_sequence))
+            await self._maybe_finish_stop()
             return
         existing = self.sources.get(opened.source_index)
         if existing is not None and existing.opened.epoch_id != opened.epoch_id:
@@ -346,6 +362,12 @@ class IngestConnection:
 
     async def _on_source_close(self, msg: SourceClose) -> None:
         assert self.auth is not None
+        closed_sequence = self.closed_sources.get((msg.source_index, msg.capture_epoch))
+        if closed_sequence is not None:
+            await self.send(SourceClosed(source_index=msg.source_index, capture_epoch=msg.capture_epoch,
+                                         durable_sequence=closed_sequence))
+            await self._maybe_finish_stop()
+            return
         src = self.sources.get(msg.source_index)
         if src is None or msg.capture_epoch != self._epoch_number(src):
             await self.send(ErrorMsg(code="unknown_source", message="source_close для неизвестного источника"))
@@ -366,6 +388,7 @@ class IngestConnection:
         src.closed = True
         await self._persist_all(force=True)
         await run_db(service.close_epoch, src.opened.epoch_id, msg.final_sequence, msg.reason)
+        self.closed_sources[(msg.source_index, msg.capture_epoch)] = src.tracker.contiguous_seq
         await anyio.to_thread.run_sync(src.writer.close)
         await run_db(_publish_source_closed, self.auth.meeting_id, src.opened.source_key, msg.reason)
         await self.send(SourceClosed(source_index=msg.source_index, capture_epoch=msg.capture_epoch,
@@ -389,6 +412,7 @@ class IngestConnection:
         seq, end = src.tracker.contiguous_seq, src.tracker.contiguous_end
         if seq > src.acked_seq:
             src.acked_seq, src.acked_end = seq, end
+            await self._persist_all()
             await self.send(Ack(source_index=src.opened.source_index, capture_epoch=self._epoch_number(src),
                                 durable_sequence=seq, durable_sample=end))
 
@@ -408,6 +432,8 @@ class IngestConnection:
                     await anyio.to_thread.run_sync(src.writer.sync)
                     if watermark[0] > src.acked_seq:
                         src.acked_seq, src.acked_end = watermark
+                        # The reconnect checkpoint is part of a durable ACK, not a delayed metric.
+                        await self._persist_all()
                         await self.send(Ack(source_index=src.opened.source_index,
                                             capture_epoch=self._epoch_number(src),
                                             durable_sequence=watermark[0], durable_sample=watermark[1]))

@@ -16,6 +16,7 @@ from hattama.db.models import (
     ExtractionRun,
     Meeting,
     Participant,
+    ReviewIssue,
     Speaker,
     SpeakerBinding,
     SummaryRevision,
@@ -27,6 +28,7 @@ from hattama.db.types import utcnow
 from hattama.domain import meeting_status
 from hattama.domain.enums import MeetingStatus, ReviewState, RevisionKind, SourceKind
 from hattama.domain.names import ParticipantRef
+from hattama.domain.readiness import meaningful_summary
 from hattama.extraction.evidence import SegmentView
 from hattama.extraction.persist import add_issue, persist_cards
 from hattama.extraction.pipeline import PIPELINE_VERSION, ExtractionPipeline, PipelineConfig
@@ -147,10 +149,12 @@ def stage_extract(settings: Settings, meeting_id: str, payload: dict[str, Any], 
             revision_id = rev.id
         else:
             revision_id = payload["revision_id"]
-        views = segment_views(s, revision_id, LIVE_WINDOW_SEGMENTS if live else None)
+        views = [v for v in segment_views(s, revision_id, LIVE_WINDOW_SEGMENTS if live else None) if v.text.strip()]
         parts = participants_of(s, meeting_id)
         mdate, tz, title = meeting.meeting_date, meeting.timezone, meeting.title
         key = f"{'live' if live else 'final'}:{revision_id}:{PIPELINE_VERSION}:{len(views)}"
+        if payload.get("retry_id"):
+            key += f":{payload['retry_id']}"
         existing = s.scalar(select(ExtractionRun).where(ExtractionRun.meeting_id == meeting_id,
                                                         ExtractionRun.idempotency_key == key))
         if existing is not None and existing.status == "succeeded":
@@ -163,10 +167,16 @@ def stage_extract(settings: Settings, meeting_id: str, payload: dict[str, Any], 
         run_id = existing.id
     if not views:
         with session_scope() as s:
-            s.get(ExtractionRun, run_id).status = "succeeded"  # type: ignore[union-attr]
+            run = s.get(ExtractionRun, run_id)
+            assert run is not None
+            run.status = "failed"
+            run.finished_at = utcnow()
+            run.error = "Речь не распознана. Проверьте источник звука и повторите запись."
             if not live:
-                _mark_ready(s, meeting_id, "пустая расшифровка")
-        return {"segments": 0}
+                add_issue(s, meeting_id, f"empty_transcript:{revision_id}", "empty_transcript", "blocker", run.error)
+                meeting_status.transition(s, meeting_id, MeetingStatus.FAILED)
+                publish(s, meeting_id, "meeting.status", {"status": MeetingStatus.FAILED, "reason": run.error})
+        return {"segments": 0, "error": "empty_transcript"}
     client = llm_client(settings)
     profile = active_profile(settings)
     cfg = PipelineConfig(ctx_size=int(profile["llm"]["ctx_size"]), with_summary=not live)
@@ -179,12 +189,16 @@ def stage_extract(settings: Settings, meeting_id: str, payload: dict[str, Any], 
         run = s.get(ExtractionRun, run_id)
         assert run is not None
         stats = persist_cards(s, meeting_id, run_id, "live" if live else "final", result.cards)
-        run.status = "succeeded"
+        complete = live or (meaningful_summary(result.summary) and not result.window_errors)
+        run.status = "succeeded" if complete else "failed"
         run.finished_at = utcnow()
         run.model = client.base_url
         run.stats = {"persist": stats, "llm_seconds": result.llm_seconds, "windows": len(result.stats),
                      "rejected_events": result.rejected_events, "window_errors": result.window_errors,
                      "raw_events": result.raw_events}
+        if not complete:
+            run.error = "Анализ завершён не полностью. Повторите анализ после проверки локальной модели."
+            add_issue(s, meeting_id, f"analysis_incomplete:{run_id}", "analysis_incomplete", "blocker", run.error)
         for err in result.window_errors:
             add_issue(s, meeting_id, f"window_error:{run_id}:{err['window']}:{err['kind']}", "extraction_window_failed",
                       "warning", f"Фрагмент расшифровки не обработан моделью ({err['error'][:200]}). Проверьте "
@@ -207,10 +221,23 @@ def stage_extract(settings: Settings, meeting_id: str, payload: dict[str, Any], 
             s.add(summ)
             s.flush()
             meeting = s.get(Meeting, meeting_id)
-            if meeting is not None and meeting.active_summary_id is None:
+            current_summary = s.get(SummaryRevision, meeting.active_summary_id) \
+                if meeting and meeting.active_summary_id else None
+            if meeting is not None and (current_summary is None or current_summary.origin == "machine"):
                 s.execute(update(Meeting).where(Meeting.id == meeting_id)
                           .values(active_summary_id=summ.id, version=Meeting.version + 1))
-            _mark_ready(s, meeting_id, "извлечение завершено")
+            if complete:
+                # A successful retry supersedes pipeline failures; human review questions remain open.
+                for issue in s.scalars(select(ReviewIssue).where(
+                    ReviewIssue.meeting_id == meeting_id, ReviewIssue.status == "open",
+                    ReviewIssue.kind.in_(["llm_unavailable", "analysis_incomplete", "empty_transcript"]))):
+                    issue.status = "resolved"
+                    issue.resolution = "Повторный анализ завершён успешно"
+                    issue.resolved_at = utcnow()
+                _mark_ready(s, meeting_id, "извлечение завершено")
+            else:
+                meeting_status.transition(s, meeting_id, MeetingStatus.FAILED)
+                publish(s, meeting_id, "meeting.status", {"status": MeetingStatus.FAILED, "reason": run.error})
     return {"cards": len(result.cards), **stats, "llm_seconds": result.llm_seconds}
 
 

@@ -17,6 +17,9 @@ export class IngestClient {
     this.retry = 0;
     this.onStatus = opts.onStatus || (() => {});
     this._stopWaiters = [];
+    this._retryTimer = null;
+    this._stopSent = false;
+    this._fatal = false;
   }
 
   addSource(sourceId, kind, sampleRate, label = "") {
@@ -25,7 +28,7 @@ export class IngestClient {
       epoch: Math.floor(Date.now() / 1000) % 2147483647,
       epochStartWallUs: nowWallUs(),
       index: null, ready: false, seq: 0, startSample: 0, unacked: [], ackedSeq: -1, bufferedSamples: 0,
-      pendingGap: null, closed: false, closeSent: false,
+      pendingGap: null, closed: false, closeSent: false, closeAcked: false,
     };
     this.sources.set(sourceId, s);
     if (this.connected) this.ws.send(sourceOpen(s));
@@ -54,12 +57,19 @@ export class IngestClient {
   }
 
   _sendFrame(s, f) {
-    this.ws.send(encodeFrame({ sourceIndex: s.index, channelCount: 1, captureEpoch: s.epoch, sequence: f.seq,
-      sampleRate: s.sampleRate, sampleCount: f.count, captureTimestampUs: f.tsUs, startSample: f.start }, f.pcm));
+    try {
+      this.ws.send(encodeFrame({ sourceIndex: s.index, channelCount: 1, captureEpoch: s.epoch, sequence: f.seq,
+        sampleRate: s.sampleRate, sampleCount: f.count, captureTimestampUs: f.tsUs, startSample: f.start }, f.pcm));
+    } catch {
+      // Keep the frame until a durable ACK. The close handler reconnects and replays it.
+      this.ws.close();
+    }
   }
 
   connect() {
-    if (this.stopped) return;
+    if (this.stopped || this._fatal) return;
+    clearTimeout(this._retryTimer);
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
     const ws = new WebSocket(this.opts.wsUrl);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
@@ -67,18 +77,28 @@ export class IngestClient {
       ws.send(hello({ token: this.opts.token || null, captureSessionId: this.opts.captureSessionId || null,
                       client: this.opts.client }));
     };
-    ws.onmessage = (ev) => this._onMessage(JSON.parse(ev.data));
+    ws.onmessage = (ev) => {
+      if (ws !== this.ws) return;
+      try { this._onMessage(JSON.parse(ev.data)); }
+      catch (error) { this.onStatus({ type: "error", message: `Некорректный ответ сервера: ${error.message}`, fatal: false }); }
+    };
+    ws.onerror = () => {}; // onclose owns reconnects, including connection failures.
     ws.onclose = (ev) => {
+      if (ws !== this.ws) return;
       this.connected = false;
-      for (const s of this.sources.values()) s.ready = false;
+      this._stopSent = false;
+      for (const s of this.sources.values()) {
+        s.ready = false;
+        if (!s.closeAcked) s.closeSent = false;
+      }
       this.onStatus({ type: "disconnected", code: ev.code });
-      if (this.stopped || ev.code === 4401 || ev.code === 4403 || ev.code === 4409) {
-        this._resolveStop(ev.code === 1000);
+      if (this.stopped || this._fatal || [4400, 4401, 4403, 4409].includes(ev.code)) {
+        this._resolveStop(this.stopped);
         return;
       }
       const delay = Math.min(10000, 1000 * 2 ** Math.min(this.retry++, 4));
       this.onStatus({ type: "reconnecting", inMs: delay });
-      setTimeout(() => this.connect(), delay);
+      this._retryTimer = setTimeout(() => this.connect(), delay);
     };
   }
 
@@ -88,7 +108,8 @@ export class IngestClient {
         this.connected = true;
         this.retry = 0;
         this.onStatus({ type: "connected", limits: m.limits });
-        for (const s of this.sources.values()) if (!s.closeSent) this.ws.send(sourceOpen(s));
+        for (const s of this.sources.values()) if (!s.closeAcked) this.ws.send(sourceOpen(s));
+        this._maybeStop();
         break;
       case "source_ready": {
         const s = this.sources.get(m.source_id);
@@ -103,7 +124,8 @@ export class IngestClient {
         const resume = m.resume_from_sequence;
         this._release(s, resume - 1);
         for (const f of s.unacked) this._sendFrame(s, f);
-        if (s.closed && !s.closeSent) this._sendClose(s, s.closeReason);
+        this.onStatus({ type: "source_ready", sourceId: s.sourceId });
+        this._maybeStop();
         break;
       }
       case "ack": {
@@ -114,8 +136,19 @@ export class IngestClient {
                             bufferedSeconds: s.bufferedSamples / s.sampleRate });
           }
         }
+        this._maybeStop();
         break;
       }
+      case "source_closed":
+        for (const s of this.sources.values()) {
+          if (s.index === m.source_index && s.epoch === m.capture_epoch) {
+            this._release(s, m.durable_sequence);
+            s.closeAcked = true;
+            this.onStatus({ type: "source_closed", sourceId: s.sourceId });
+          }
+        }
+        this._maybeStop();
+        break;
       case "gap_recorded":
         this.onStatus({ type: "gap", ...m });
         break;
@@ -124,12 +157,17 @@ export class IngestClient {
         break;
       case "session_stopped":
         this.stopped = true;
+        clearTimeout(this._retryTimer);
         this.onStatus({ type: "session_stopped" });
         this._resolveStop(true);
         break;
       case "error":
         this.onStatus({ type: "error", code: m.code, message: m.message, fatal: m.fatal });
-        if (m.fatal) this.stopped = m.code !== "superseded";
+        if (m.fatal) {
+          this._fatal = true;
+          clearTimeout(this._retryTimer);
+          this._resolveStop(false);
+        }
         break;
       default:
         break;
@@ -153,7 +191,7 @@ export class IngestClient {
     if (!s || s.closed) return;
     s.closed = true;
     s.closeReason = reason;
-    if (this.connected && s.ready) this._sendClose(s, reason);
+    this._maybeStop();
   }
 
   _sendClose(s, reason) {
@@ -162,14 +200,35 @@ export class IngestClient {
       final_sequence: s.seq - 1, reason }));
   }
 
-  /** Stop capture: close sources (server fsyncs and acks), then end the session. */
+  _maybeStop() {
+    if (!this.connected || this.stopped || this._fatal) return;
+    // Do not start the server's stop grace period until every sample is durable.
+    // This lets an offline stop reconnect and finish without losing its buffer.
+    for (const s of this.sources.values()) {
+      if (s.closed && s.ready && !s.closeSent && !s.unacked.length && !s.pendingGap) this._sendClose(s, s.closeReason);
+    }
+    if (this.stopping && !this._stopSent && [...this.sources.values()].every(s => s.closeAcked)) {
+      this._stopSent = true;
+      this.ws.send(JSON.stringify({ type: "stop_session", reason: this._stopReason }));
+    }
+  }
+
+  /** Stop capture: ACK all samples, close sources, then ask the server to finalize. */
   stop(reason = "user_stop", timeoutMs = 15000) {
+    if (this.stopped) return Promise.resolve(true);
+    if (this._fatal) return Promise.resolve(false);
     this.stopping = true;
+    this._stopReason = reason;
     return new Promise((resolve) => {
-      this._stopWaiters.push(resolve);
-      if (this.connected) this.ws.send(JSON.stringify({ type: "stop_session", reason }));
+      const timer = setTimeout(() => {
+        this._stopWaiters = this._stopWaiters.filter(w => w !== done);
+        resolve(false);
+      }, timeoutMs);
+      const done = (ok) => { clearTimeout(timer); resolve(ok); };
+      this._stopWaiters.push(done);
       for (const s of this.sources.values()) this.closeSource(s.sourceId, "stop_requested");
-      setTimeout(() => this._resolveStop(false), timeoutMs);
+      this._maybeStop();
+      if (!this.connected) this.connect();
     });
   }
 
@@ -184,5 +243,14 @@ export class IngestClient {
     let total = 0;
     for (const s of this.sources.values()) total += s.bufferedSamples / s.sampleRate;
     return total;
+  }
+
+  /** Release transport resources without claiming buffered audio was saved. */
+  disconnect() {
+    clearTimeout(this._retryTimer);
+    this._fatal = true;
+    this.connected = false;
+    this._resolveStop(false);
+    if (this.ws && this.ws.readyState < WebSocket.CLOSING) this.ws.close(1000);
   }
 }

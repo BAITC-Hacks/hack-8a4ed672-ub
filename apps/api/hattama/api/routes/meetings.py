@@ -226,8 +226,9 @@ def patch_meeting(meeting_id: str, body: MeetingPatch, user: User = Depends(curr
         raise HTTPException(status.HTTP_409_CONFLICT, "Протокол утверждён; создайте новую версию")
     before = {"title": meeting.title, "meeting_date": str(meeting.meeting_date), "timezone": meeting.timezone}
     changes = body.model_dump(exclude_unset=True, exclude={"version"})
-    if "meeting_url" in changes:
-        changes["meeting_url"] = _check_url(changes.get("platform") or meeting.platform, changes["meeting_url"])
+    if "meeting_url" in changes or "platform" in changes:
+        changes["meeting_url"] = _check_url(changes.get("platform") or meeting.platform,
+                                             changes.get("meeting_url", meeting.meeting_url))
     for key, value in changes.items():
         setattr(meeting, key, value)
     audit(db, action="meeting.updated", actor_user_id=user.id, meeting_id=meeting.id, object_type="meeting",

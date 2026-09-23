@@ -42,12 +42,16 @@ def validate_meeting_url(url: str, platform: str, *, allow_auth_hosts: bool = Fa
     url = url.strip()
     if len(url) > 2000:
         raise MeetingUrlError("Слишком длинная ссылка")
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError as exc:
+        raise MeetingUrlError("Некорректная ссылка встречи") from exc
     if parts.scheme != "https":
         raise MeetingUrlError("Разрешены только ссылки https://")
     if parts.username or parts.password:
         raise MeetingUrlError("Ссылка не должна содержать учётные данные")
-    if parts.port not in (None, 443):
+    if port not in (None, 443):
         raise MeetingUrlError("Нестандартный порт запрещён")
     host = (parts.hostname or "").lower().rstrip(".")
     _reject_ip_and_local(host)
