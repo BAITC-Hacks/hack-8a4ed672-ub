@@ -1,0 +1,80 @@
+{
+  "$comment": "Pinned local models. Runtime loads ONLY from HATTAMA_MODELS_DIR/<local_dir>. Preparation (download) and offline run are separate commands. 'prepare' = default set for `tasks.py models-prepare`.",
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "whisper-large-v3-turbo-ct2",
+      "role": "asr",
+      "prepare": true,
+      "source": {"hub": "huggingface", "repo_id": "dropbox-dash/faster-whisper-large-v3-turbo", "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"},
+      "origin_note": "CTranslate2-конвертация openai/whisper-large-v3-turbo (multilingual, не .en). Организация dropbox-dash (ранее Mobius Labs).",
+      "files": [
+        {"path": "config.json"},
+        {"path": "model.bin", "sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da", "size": 1617884929},
+        {"path": "preprocessor_config.json"},
+        {"path": "tokenizer.json"},
+        {"path": "vocabulary.json"}
+      ],
+      "local_dir": "whisper-large-v3-turbo-ct2",
+      "license": "MIT (веса OpenAI Whisper; карточка конвертации: MIT)",
+      "runtime": "faster-whisper (CTranslate2)",
+      "decoding": {"task": "transcribe", "language": "null для mixed, ru/kk только при явном выборе", "multilingual": true, "word_timestamps": true, "condition_on_previous_text": false, "temperature": [0.0, 0.2, 0.4], "vad": "silero (встроенный в faster-whisper)"}
+    },
+    {
+      "id": "whisper-large-v3-ct2",
+      "role": "asr",
+      "prepare": false,
+      "source": {"hub": "huggingface", "repo_id": "Systran/faster-whisper-large-v3", "revision": null},
+      "origin_note": "Кандидат для сравнения; скачивается только если turbo не пройдёт проверку казахско-русской речи.",
+      "files": [{"path": "config.json"}, {"path": "model.bin"}, {"path": "preprocessor_config.json"}, {"path": "tokenizer.json"}, {"path": "vocabulary.json"}],
+      "local_dir": "whisper-large-v3-ct2",
+      "license": "MIT",
+      "runtime": "faster-whisper (CTranslate2)"
+    },
+    {
+      "id": "kazakh-whisper-large-v3-turbo-experimental",
+      "role": "asr-experiment",
+      "prepare": false,
+      "source": {"hub": "huggingface", "repo_id": "shyngys879/kazakh-whisper-large-v3-turbo", "revision": null},
+      "origin_note": "Эксперимент. Карточка предупреждает о возможном ухудшении на казахско-русском code-switching. Требует конвертации в CTranslate2 и проверки условий использования. Не назначается основным mixed-ASR.",
+      "files": [],
+      "local_dir": "kazakh-whisper-large-v3-turbo-ct2",
+      "license": "не проверена — требуется проверка перед использованием",
+      "runtime": "faster-whisper (после ct2-transformers-converter)"
+    },
+    {
+      "id": "qwen3-8b-q4_k_m",
+      "role": "llm",
+      "prepare": false,
+      "source": {"hub": "huggingface", "repo_id": "Qwen/Qwen3-8B-GGUF", "revision": "7c41481f57cb95916b40956ab2f0b139b296d974"},
+      "origin_note": "Официальный GGUF от Qwen. Скачивается только выбранный файл Q4_K_M.",
+      "files": [{"path": "Qwen3-8B-Q4_K_M.gguf", "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785", "size": 5027783488}],
+      "local_dir": "qwen3-8b-gguf",
+      "license": "Apache-2.0",
+      "runtime": "llama.cpp server (--jinja, chat template из GGUF)"
+    },
+    {
+      "id": "qwen3-4b-q4_k_m",
+      "role": "llm",
+      "prepare": true,
+      "source": {"hub": "huggingface", "repo_id": "Qwen/Qwen3-4B-GGUF", "revision": "bc640142c66e1fdd12af0bd68f40445458f3869b"},
+      "origin_note": "Выбрана для профиля gpu-6gb (решение 2026-09-23, см. DECISIONS.md): помещается в VRAM вместе с live ASR. Не считается равноценной 8B без измерений.",
+      "files": [{"path": "Qwen3-4B-Q4_K_M.gguf", "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5", "size": 2497280256}],
+      "local_dir": "qwen3-4b-gguf",
+      "license": "Apache-2.0",
+      "runtime": "llama.cpp server"
+    },
+    {
+      "id": "pyannote-community-1",
+      "role": "diarization",
+      "prepare": false,
+      "gated": true,
+      "source": {"hub": "huggingface", "repo_id": "pyannote/speaker-diarization-community-1", "revision": "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee"},
+      "origin_note": "Gated: условия принимает сам пользователь на huggingface.co под своим аккаунтом. Токен берётся из локальной авторизации HF или переменной HF_TOKEN; в логи и Git не попадает.",
+      "files": "*",
+      "local_dir": "pyannote-speaker-diarization-community-1",
+      "license": "см. карточку модели (CC-BY-4.0 на момент проверки) — перепроверить при подготовке",
+      "runtime": "pyannote.audio 4.x, локально, телеметрия отключена"
+    }
+  ]
+}

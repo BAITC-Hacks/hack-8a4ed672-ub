@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Хаттама — проверка устройств</title><link rel="stylesheet" href="popup.css">
+<style>body{width:auto;max-width:640px}</style></head>
+<body>
+  <h1>Проверка устройств перед встречей</h1>
+  <ol>
+    <li>Звук собеседников записывается из вкладки встречи. Это <b>не</b> запись вашей речи.</li>
+    <li>Ваша речь — отдельный источник: собственный микрофон. По умолчанию он выключен.</li>
+    <li>Наденьте наушники: без них звук динамиков попадёт в микрофон (эхо, дубли реплик).</li>
+    <li>Микрофон пишется независимо от mute в Meet/Teams/Zoom — выключайте его кнопкой в расширении.</li>
+  </ol>
+  <button id="grant">Разрешить доступ к микрофону</button>
+  <label>Микрофон <select id="devices"></select></label>
+  <p>Уровень микрофона: <meter id="level" min="0" max="1"></meter> <span id="hint"></span></p>
+  <p id="error" role="alert"></p>
+  <script type="module" src="setup.js"></script>
+</body>
+</html>

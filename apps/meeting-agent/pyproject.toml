@@ -1,0 +1,26 @@
+[project]
+name = "hattama-meeting-agent"
+version = "0.1.0"
+description = "Self-hosted meeting bot: visible participant 'Хаттама — запись и ИИ-протокол' (Linux, Playwright, PulseAudio, FFmpeg)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "hattama-contracts",
+  "httpx>=0.27,<1",
+  "websockets>=13,<16",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.48,<2"]
+
+[project.scripts]
+hattama-agent = "hattama_agent.main:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hattama_agent"]
+
+[tool.uv.sources]
+hattama-contracts = { workspace = true }

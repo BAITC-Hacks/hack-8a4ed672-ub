@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Хаттама Live Companion",
+  "version": "0.1.0",
+  "description": "Захват звука активной вкладки Google Meet / Teams Web / Zoom Web для локального протоколирования Хаттама Live.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyROmC0SP3oZTI8wSBYvmeN3tUmAmb7pgQrJXmwBpsBjuzotTdzAy+O1LBzMyIn4xfoTOY+hhqyR6thh2Rn7FqNkZzrZdRgE/cGQOYBBl8onelZz+TWl9cvXzEGB8UIDBNzBbtFmi5JCv71Roi1PMmP2I2NZgf/huCBmqwzKa8nJqvlUSOZXnx5Uu91cukymjOb132ioEANGp8/Bqsuhpc784SHbj8JzsbIsQngSfc1kJABJsWfz69N8iS4XS1VVB0O/6LMhrvWE/bpb4CDrk5KSpSxkuAJTX+0rrSX2e03MYhMJYqx5THYB1Je5FFXizuMSIIZR0kCNOMZ0qA2jjwQIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabCapture", "offscreen", "storage"],
+  "optional_host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*"],
+  "action": { "default_popup": "popup.html", "default_title": "Хаттама Live" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "options_page": "setup.html",
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
+}

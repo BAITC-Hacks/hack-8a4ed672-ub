@@ -1,0 +1,45 @@
+[project]
+name = "hattama"
+version = "0.1.0"
+description = "Хаттама Live: локальное автопротоколирование совещаний (API, воркеры, пайплайн)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "hattama-contracts",
+  "fastapi>=0.115,<0.120",
+  "uvicorn[standard]>=0.30,<1",
+  "pydantic>=2.9,<3",
+  "pydantic-settings>=2.6,<3",
+  "sqlalchemy>=2.0.36,<2.1",
+  "alembic>=1.14,<2",
+  "psycopg[binary]>=3.2,<4",
+  "argon2-cffi>=23.1",
+  "numpy>=1.26,<3",
+  "scipy>=1.13,<2",
+  "httpx>=0.27,<1",
+  "reportlab>=4.2,<5",
+  "python-docx>=1.1,<2",
+  "psutil>=5.9",
+  "python-multipart>=0.0.9",
+  "python-dateutil>=2.9",
+  "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+asr = ["faster-whisper==1.2.1"]
+diarization = ["pyannote.audio>=4.0,<5"]
+prepare = ["huggingface-hub>=0.26,<1"]
+# Windows GPU: CTranslate2 4.8.2 wheel bundles cuDNN 9 but not cuBLAS; official NVIDIA wheel, matches CT2 build (CUDA 12.8)
+cuda-win = ["nvidia-cublas-cu12==12.8.4.1; sys_platform == 'win32'"]
+
+[project.scripts]
+hattama = "hattama.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hattama"]
+
+[tool.uv.sources]
+hattama-contracts = { workspace = true }

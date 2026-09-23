@@ -1,0 +1,64 @@
+# --- secrets / local config ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+!deploy/**/README*.md
+secrets/
+
+# --- meeting data, recordings, models: NEVER commit ---
+/data/
+/models/
+/var/
+*.pcm
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.ogg
+*.gguf
+*.bin
+*.safetensors
+!fixtures/audio/synthetic/*.wav
+fixtures/audio/private/
+reports/runs/
+exports/
+
+# --- browser profiles / cookies for meeting-agent ---
+apps/meeting-agent/profiles/
+**/browser-profiles/
+**/storage-state*.json
+**/playwright/.auth/
+
+# --- python ---
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- node ---
+node_modules/
+dist/
+*.tsbuildinfo
+apps/extension/dist/
+apps/web/dist/
+test-results/
+playwright-report/
+
+# --- tools ---
+tools/llama.cpp/
+.idea/
+.vscode/
+*.log

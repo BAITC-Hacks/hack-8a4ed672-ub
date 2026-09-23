@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Хаттама Live</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <h1>Хаттама Live</h1>
+  <section id="pair">
+    <label>Сервер <input id="backend" type="url" value="http://localhost:8000" required></label>
+    <label>Код сопряжения <input id="code" placeholder="ABCD-EFGH" autocomplete="off" required></label>
+    <button id="pairBtn">Подключить</button>
+    <p class="hint">Код показывает страница встречи → «Расширение Chrome». Действует 5 минут, один раз.</p>
+  </section>
+  <section id="ready" hidden>
+    <p>Встреча: <b id="meeting"></b></p>
+    <p class="hint">Откройте вкладку Google Meet / Teams Web / Zoom Web и нажмите кнопку в этой вкладке.
+      Захватывается только текущая вкладка; настольные Zoom/Teams не поддерживаются.</p>
+    <button id="startBtn" class="primary">Начать запись этой вкладки</button>
+  </section>
+  <section id="live" hidden>
+    <p class="rec">● Идёт запись вкладки</p>
+    <dl>
+      <dt>Сервер</dt><dd id="conn">—</dd>
+      <dt>Сохранено (ACK)</dt><dd id="durable">0 c</dd>
+      <dt>Неподтверждено</dt><dd id="buffered">0 c</dd>
+      <dt>Уровень вкладки</dt><dd><meter id="tabLevel" min="0" max="1"></meter></dd>
+    </dl>
+    <div id="micBox" class="mic-off">
+      <p><b>Собственный микрофон</b>: <span id="micState">выключен</span></p>
+      <p class="warn">Микрофон записывается <u>независимо</u> от кнопки mute в Meet/Teams/Zoom. Используйте кнопку
+        ниже; синхронизации с mute платформы нет. Наденьте наушники, чтобы не было эха.</p>
+      <button id="micBtn">Включить микрофон</button>
+      <button id="muteBtn" hidden>Выключить звук микрофона</button>
+      <meter id="micLevel" min="0" max="1"></meter>
+    </div>
+    <button id="stopBtn" class="danger">Остановить запись</button>
+  </section>
+  <p id="error" role="alert"></p>
+  <p><a href="setup.html" target="_blank">Настройка микрофона и проверка устройств</a></p>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
