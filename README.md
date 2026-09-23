@@ -94,7 +94,13 @@ Qwen3-4B Q4_K_M занимает ≈3.2 ГиБ (веса + KV-кэш на 4096 �
 python tasks.py test                 # unit (Python) + кодек JS против общих тест-векторов
 python tasks.py test-integration     # API, WebSocket-протокол, БД (без моделей)
 python tasks.py smoke-local --with-models   # полный маршрут с реальными моделями, внешняя сеть заблокирована
+.venv/Scripts/python scripts/stream_wav.py --code ABCD-EFGH  # эмуляция расширения: WAV в реальном времени на сервер
 ```
+Пошаговая проверка и готовый промпт для коллег: [docs/RUN_PROMPT.md](docs/RUN_PROMPT.md).
+
+Живой прогон 2026-09-23 (RTX 3060 6 ГБ, синтетический диалог 38 с в реальном времени, `stream_wav.py`):
+черновая реплика — медиана 0.9 с, p95 1.65 с; стабильная — медиана 4.8 с, p95 5.2 с; RTF шага 0.39;
+финальная обработка → NEEDS_REVIEW. Качество поручений Qwen3-4B низкое (см. STATUS.md).
 
 ## Лицензии моделей
 Whisper large-v3-turbo (CT2, `dropbox-dash/faster-whisper-large-v3-turbo`): MIT.
