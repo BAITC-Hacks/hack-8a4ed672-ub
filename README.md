@@ -101,3 +101,7 @@ Whisper large-v3-turbo (CT2, `dropbox-dash/faster-whisper-large-v3-turbo`): MIT.
 Qwen3-4B-GGUF: Apache-2.0. llama.cpp: MIT. Шрифт DejaVu: лицензия в `apps/api/hattama/export/fonts`.
 pyannote community-1 — gated-модель: условия принимает сам пользователь на Hugging Face.
 Ревизии и sha256 закреплены в `model-configs/model-manifest.json`.
+# hack-8a4ed672-ub
+Hackathon team repository for UB
+
+There are problems occured. Can you wait a little bit more for the main codebase.
