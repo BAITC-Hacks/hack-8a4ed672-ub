@@ -41,10 +41,10 @@ export function hello({ token = null, captureSessionId = null, client }) {
   return JSON.stringify({ type: "hello", protocol: PROTOCOL, token, capture_session_id: captureSessionId, client });
 }
 
-export function sourceOpen({ sourceId, kind, sampleRate, channelCount, captureEpoch, epochStartWallUs, label = "" }) {
+export function sourceOpen({ sourceId, kind, sampleRate, channelCount, captureEpoch, epoch, epochStartWallUs, label = "" }) {
   return JSON.stringify({
     type: "source_open", source_id: sourceId, kind, sample_rate: sampleRate, channel_count: channelCount,
-    capture_epoch: captureEpoch, epoch_start_wall_us: Math.round(epochStartWallUs), label,
+    capture_epoch: captureEpoch ?? epoch, epoch_start_wall_us: Math.round(epochStartWallUs), label,
   });
 }
 

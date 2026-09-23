@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
-from sqlalchemy import func, select, update
+from hattama_contracts.messages import Hello, SourceOpen
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from hattama.db.models import (
@@ -24,10 +25,10 @@ from hattama.domain.enums import CaptureMode, CaptureState, MeetingStatus, Membe
 from hattama.jobs.queue import enqueue
 from hattama.security.tokens import hash_token
 from hattama.services.events import audit, publish
-from hattama_contracts.messages import Hello, SourceOpen
 
 ALLOWED_KINDS: dict[str, set[str]] = {
     CaptureMode.COMPANION: {SourceKind.TAB_AUDIO, SourceKind.MICROPHONE},
+    CaptureMode.BROWSER_TAB: {SourceKind.TAB_AUDIO, SourceKind.MICROPHONE},
     CaptureMode.LOCAL_MIC: {SourceKind.LOCAL_MICROPHONE},
     CaptureMode.BOT: {SourceKind.BOT_AUDIO},
 }
@@ -78,7 +79,7 @@ def authenticate_hello(session: Session, hello: Hello, origin_kind: str, cookie_
         raise IngestError("not_found", "Сессия захвата не найдена")
     if hello.capture_session_id and hello.capture_session_id != cs.id:
         raise IngestError("forbidden", "Токен выдан для другой сессии захвата")
-    if cs.state not in (CaptureState.CREATED, CaptureState.ACTIVE):
+    if cs.state not in (CaptureState.CREATED, CaptureState.ACTIVE, CaptureState.STOPPING):
         raise IngestError("session_closed", f"Сессия захвата в состоянии {cs.state}; запись остановлена")
     meeting = session.get(Meeting, cs.meeting_id)
     if meeting is None or meeting.deleted_at is not None:
@@ -87,8 +88,8 @@ def authenticate_hello(session: Session, hello: Hello, origin_kind: str, cookie_
         raise IngestError("consent_required", "Не подтверждено уведомление участников о записи")
     if cs.mode == CaptureMode.UPLOAD:
         raise IngestError("forbidden", "Сессия загрузки файла не принимает поток")
-    if actor == "web" and cs.mode != CaptureMode.LOCAL_MIC:
-        raise IngestError("forbidden", "Из веб-интерфейса доступен только локальный микрофон")
+    if actor == "web" and cs.mode not in (CaptureMode.LOCAL_MIC, CaptureMode.BROWSER_TAB):
+        raise IngestError("forbidden", "Из веб-интерфейса доступны запись микрофона и вкладки")
     if cs.mode == CaptureMode.BOT and actor != "agent":
         raise IngestError("forbidden", "Сессия бота принимает поток только от meeting-agent")
     return IngestAuth(cs.id, cs.meeting_id, user_id, actor, cs.mode)
@@ -131,6 +132,7 @@ class OpenedSource:
     epoch_start_wall_us: int
     source_key: str
     kind: str
+    closed: bool = False
 
 
 def open_source(session: Session, auth: IngestAuth, msg: SourceOpen, max_sources: int) -> OpenedSource:
@@ -141,7 +143,11 @@ def open_source(session: Session, auth: IngestAuth, msg: SourceOpen, max_sources
         raise IngestError("bad_clock", "Время начала эпохи расходится с часами сервера более допустимого", fatal=False)
     src = session.scalar(select(CaptureSource).where(CaptureSource.capture_session_id == auth.capture_session_id,
                                                      CaptureSource.source_key == msg.source_id))
+    cs = session.get(CaptureSession, auth.capture_session_id)
+    assert cs is not None
     if src is None:
+        if cs.state == CaptureState.STOPPING:
+            raise IngestError("session_stopping", "Запись завершается; новый источник открыть нельзя", fatal=False)
         count = session.scalar(select(func.count()).select_from(CaptureSource)
                                .where(CaptureSource.capture_session_id == auth.capture_session_id)) or 0
         if count >= max_sources:
@@ -155,11 +161,11 @@ def open_source(session: Session, auth: IngestAuth, msg: SourceOpen, max_sources
     epoch = session.scalar(select(SourceEpoch).where(SourceEpoch.source_id == src.id,
                                                      SourceEpoch.epoch == msg.capture_epoch))
     if epoch is not None:
-        if epoch.closed_at is not None:
-            raise IngestError("epoch_closed", "Эпоха закрыта; начните новую capture_epoch", fatal=False)
         if epoch.sample_rate != msg.sample_rate or epoch.channel_count != msg.channel_count:
             raise IngestError("epoch_format_changed", "Формат эпохи не может меняться", fatal=False)
     else:
+        if cs.state == CaptureState.STOPPING:
+            raise IngestError("session_stopping", "Запись завершается; новую эпоху открыть нельзя", fatal=False)
         for old in session.scalars(select(SourceEpoch).where(SourceEpoch.source_id == src.id,
                                                              SourceEpoch.closed_at.is_(None))):
             old.closed_at = utcnow()
@@ -175,20 +181,26 @@ def open_source(session: Session, auth: IngestAuth, msg: SourceOpen, max_sources
             if cs.timeline_origin_us is None:
                 cs.timeline_origin_us = msg.epoch_start_wall_us
         session.flush()
-    src.last_state = "open"
-    publish(session, auth.meeting_id, "source.state",
-            {"capture_session_id": auth.capture_session_id, "source_id": msg.source_id, "kind": msg.kind,
-             "state": "open", "epoch": msg.capture_epoch, "sample_rate": msg.sample_rate, "label": msg.label})
+    if epoch.closed_at is None:
+        src.last_state = "open"
+        publish(session, auth.meeting_id, "source.state",
+                {"capture_session_id": auth.capture_session_id, "source_id": msg.source_id, "kind": msg.kind,
+                 "state": "open", "epoch": msg.capture_epoch, "sample_rate": msg.sample_rate, "label": msg.label})
     return OpenedSource(src.id, src.source_index, epoch.id, epoch.rel_path, epoch.durable_sequence,
                         epoch.durable_samples, epoch.sample_rate, epoch.channel_count, epoch.epoch_start_wall_us,
-                        src.source_key, src.kind)
+                        src.source_key, src.kind, epoch.closed_at is not None)
 
 
 def persist_progress(session: Session, epoch_id: str, durable_sequence: int, durable_samples: int,
                      received: int, duplicates: int, capture_session_id: str) -> None:
-    session.execute(update(SourceEpoch).where(SourceEpoch.id == epoch_id).values(
-        durable_sequence=durable_sequence, durable_samples=durable_samples, received_frames=received,
-        duplicate_frames=duplicates))
+    # A superseded socket may finish cleanup after a reconnect has progressed. Never move the
+    # durable checkpoint backwards, or the next client would replay already acknowledged audio.
+    session.execute(update(SourceEpoch).where(SourceEpoch.id == epoch_id,
+                                               SourceEpoch.durable_sequence <= durable_sequence).values(
+        durable_sequence=durable_sequence, durable_samples=durable_samples,
+        received_frames=case((SourceEpoch.received_frames < received, received), else_=SourceEpoch.received_frames),
+        duplicate_frames=case((SourceEpoch.duplicate_frames < duplicates, duplicates),
+                              else_=SourceEpoch.duplicate_frames)))
     session.execute(update(CaptureSession).where(CaptureSession.id == capture_session_id)
                     .values(last_frame_at=utcnow()))
 
@@ -280,12 +292,17 @@ def finalize_stop_if_ready(session: Session, capture_session_id: str, grace_s: f
     )
     if not res.rowcount:  # type: ignore[attr-defined]
         return False  # another process finished it
-    meeting_status.transition(session, cs.meeting_id, MeetingStatus.PROCESSING)
-    enqueue(session, kind="finalize_meeting", key=f"finalize:{cs.meeting_id}:{capture_session_id}",
-            meeting_id=cs.meeting_id, payload={"capture_session_id": capture_session_id}, priority=50)
+    recorded_samples = session.scalar(select(func.sum(SourceEpoch.durable_samples)).join(
+        CaptureSource, CaptureSource.id == SourceEpoch.source_id).where(
+            CaptureSource.capture_session_id == capture_session_id)) or 0
+    target = MeetingStatus.PROCESSING if recorded_samples else MeetingStatus.READY
+    meeting_status.transition(session, cs.meeting_id, target)
+    if recorded_samples:
+        enqueue(session, kind="finalize_meeting", key=f"finalize:{cs.meeting_id}:{capture_session_id}",
+                meeting_id=cs.meeting_id, payload={"capture_session_id": capture_session_id}, priority=50)
     publish(session, cs.meeting_id, "capture.state",
             {"capture_session_id": cs.id, "state": CaptureState.STOPPED, "open_epochs_force_closed": len(open_ids)})
-    publish(session, cs.meeting_id, "meeting.status", {"status": MeetingStatus.PROCESSING})
+    publish(session, cs.meeting_id, "meeting.status", {"status": target})
     audit(session, action="capture.stopped", actor_user_id=None, actor_kind="system", meeting_id=cs.meeting_id,
           object_type="capture_session", object_id=cs.id, after={"force_closed_epochs": len(open_ids)})
     return True
