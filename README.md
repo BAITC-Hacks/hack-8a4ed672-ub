@@ -1,5 +1,4 @@
 # hack-8a4ed672-ub
 Hackathon team repository for UB
 
-
-We are writig the code base. Please wait for the changes in the project.
+There are problems occured. Can you wait a little bit more for the main codebase.
