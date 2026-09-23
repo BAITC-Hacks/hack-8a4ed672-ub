@@ -1,0 +1,39 @@
+{
+  "$comment": "Pinned native runtimes. Windows: official llama.cpp release zips (sha256 from GitHub release digests). Linux/Docker: pinned container image, see deploy/compose.yaml.",
+  "schema_version": 1,
+  "runtimes": [
+    {
+      "id": "llama.cpp-win-cuda12.4",
+      "platform": "windows-x64",
+      "requires": "NVIDIA driver >= 551 (CUDA 12.4 runtime). CUDA 13.x builds require a newer driver and are NOT used with driver 566.07.",
+      "version": "b11120",
+      "assets": [
+        {"url": "https://github.com/ggml-org/llama.cpp/releases/download/b11120/llama-b11120-bin-win-cuda-12.4-x64.zip", "sha256": "3a2fee9dbb1d8ddf2928ed8a4a664424108136762c79fe79ab4d5c70a7b7240d"},
+        {"url": "https://github.com/ggml-org/llama.cpp/releases/download/b11120/cudart-llama-bin-win-cuda-12.4-x64.zip", "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"}
+      ],
+      "local_dir": "llama.cpp/b11120-win-cuda12.4",
+      "executable": "llama-server.exe",
+      "license": "MIT (llama.cpp); CUDA runtime DLLs — NVIDIA CUDA EULA (redistributable)"
+    },
+    {
+      "id": "llama.cpp-win-cpu",
+      "platform": "windows-x64",
+      "requires": "AVX2 CPU",
+      "version": "b11120",
+      "assets": [
+        {"url": "https://github.com/ggml-org/llama.cpp/releases/download/b11120/llama-b11120-bin-win-cpu-x64.zip", "sha256": "bbaf0584954c7ef53c2ccc5675f96b8849ac81ca181f540b862eefef1a09a402"}
+      ],
+      "local_dir": "llama.cpp/b11120-win-cpu",
+      "executable": "llama-server.exe",
+      "license": "MIT"
+    },
+    {
+      "id": "llama.cpp-docker",
+      "platform": "linux-docker",
+      "version": "b11120",
+      "image": "ghcr.io/ggml-org/llama.cpp:server-cuda-b11120",
+      "image_cpu": "ghcr.io/ggml-org/llama.cpp:server-b11120",
+      "license": "MIT"
+    }
+  ]
+}

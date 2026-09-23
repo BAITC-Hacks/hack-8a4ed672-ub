@@ -1,0 +1,69 @@
+# Resource profiles. Each profile states WHAT runs WHERE and which stages are serialized.
+# Values are starting points; final values are chosen by measurements (see docs/model-selection.md).
+# Model ids refer to entries in model-configs/model-manifest.json.
+
+[profiles.gpu-large]
+live_analysis = true
+description = "GPU >= 12 GiB VRAM, RAM >= 32 GiB: live ASR, диаризация и LLM могут работать параллельно"
+min_vram_mib = 12000
+min_ram_total_gib = 32
+live_asr = { model = "whisper-large-v3-turbo-ct2", device = "cuda", compute_type = "float16", step_s = 1.5, max_window_s = 20.0, beam_size = 1 }
+final_asr = { model = "whisper-large-v3-turbo-ct2", device = "cuda", compute_type = "float16", beam_size = 5 }
+diarization = { model = "pyannote-community-1", device = "cuda", run_exclusive = false }
+llm = { model = "qwen3-8b-q4_k_m", n_gpu_layers = 99, ctx_size = 4096, parallel = 1 }
+analysis_concurrency = 1
+heavy_stages_exclusive = false
+realtime_claim = "цель RTF<1 и p95 черновой реплики <=10 c — проверяется замером"
+
+[profiles.gpu-6gb]
+live_analysis = true
+description = "GPU 6–11 GiB VRAM: live ASR на GPU; тяжёлые этапы после встречи выполняются по очереди"
+min_vram_mib = 5500
+min_ram_total_gib = 12
+live_asr = { model = "whisper-large-v3-turbo-ct2", device = "cuda", compute_type = "int8_float16", step_s = 1.5, max_window_s = 20.0, beam_size = 1 }
+final_asr = { model = "whisper-large-v3-turbo-ct2", device = "cuda", compute_type = "int8_float16", beam_size = 5 }
+diarization = { model = "pyannote-community-1", device = "cpu", run_exclusive = true }
+# Qwen3-4B chosen for 6 GiB VRAM: fits next to live ASR (see DECISIONS.md D-004). 8B remains a measured alternative.
+llm = { model = "qwen3-4b-q4_k_m", n_gpu_layers = 99, ctx_size = 4096, parallel = 1 }
+analysis_concurrency = 1
+heavy_stages_exclusive = true
+realtime_claim = "цель RTF<1 для live ASR на GPU — проверяется замером; анализ поручений идёт в ограниченной очереди"
+
+[profiles.cpu]
+live_analysis = false
+description = "Без совместимой GPU. Live-режим не обещает real-time: реплики появляются с задержкой, очередь видна в интерфейсе"
+min_vram_mib = 0
+min_ram_total_gib = 8
+live_asr = { model = "whisper-large-v3-turbo-ct2", device = "cpu", compute_type = "int8", step_s = 4.0, max_window_s = 16.0, beam_size = 1 }
+final_asr = { model = "whisper-large-v3-turbo-ct2", device = "cpu", compute_type = "int8", beam_size = 5 }
+diarization = { model = "pyannote-community-1", device = "cpu", run_exclusive = true }
+llm = { model = "qwen3-8b-q4_k_m", n_gpu_layers = 0, ctx_size = 4096, parallel = 1 }
+analysis_concurrency = 1
+heavy_stages_exclusive = true
+realtime_claim = "real-time НЕ гарантируется; возможна задержка в десятки секунд и более"
+
+[profiles.test]
+live_analysis = false
+description = "Только автотесты: модели не загружаются, используются явно помеченные тестовые провайдеры"
+min_vram_mib = 0
+min_ram_total_gib = 0
+live_asr = { model = "none", device = "cpu", compute_type = "int8", step_s = 1.0, max_window_s = 10.0, beam_size = 1 }
+final_asr = { model = "none", device = "cpu", compute_type = "int8", beam_size = 1 }
+diarization = { model = "none", device = "cpu", run_exclusive = true }
+llm = { model = "none", n_gpu_layers = 0, ctx_size = 4096, parallel = 1 }
+analysis_concurrency = 1
+heavy_stages_exclusive = true
+realtime_claim = "не применимо"
+
+[profiles.cpu-8gb]
+description = "8 GiB RAM без подходящей GPU. Во время встречи только live ASR (с задержкой); LLM-анализ — ПОСЛЕ встречи, когда ASR-воркер остановлен. Лучший вариант для 8 GiB — тонкий клиент к серверу коллеги (см. README)"
+live_analysis = false
+min_vram_mib = 0
+min_ram_total_gib = 8
+live_asr = { model = "whisper-large-v3-turbo-ct2", device = "cpu", compute_type = "int8", step_s = 5.0, max_window_s = 15.0, beam_size = 1 }
+final_asr = { model = "whisper-large-v3-turbo-ct2", device = "cpu", compute_type = "int8", beam_size = 2 }
+diarization = { model = "pyannote-community-1", device = "cpu", run_exclusive = true }
+llm = { model = "qwen3-4b-q4_k_m", n_gpu_layers = 0, ctx_size = 4096, parallel = 1 }
+analysis_concurrency = 1
+heavy_stages_exclusive = true
+realtime_claim = "real-time НЕ гарантируется; реплики с задержкой; поручения появляются только после встречи"

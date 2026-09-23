@@ -1,0 +1,51 @@
+{
+  "protocol": "hattama.audio.v1",
+  "note": "counters limited to 2^53-1 so vectors are exact in JSON/JavaScript",
+  "vectors": [
+    {
+      "name": "mono-48k-4samples",
+      "frame": {
+        "source_index": 0,
+        "channel_count": 1,
+        "capture_epoch": 0,
+        "sequence": 0,
+        "sample_rate": 48000,
+        "sample_count": 4,
+        "capture_timestamp_us": 1758612345678901,
+        "start_sample": 0,
+        "payload_hex": "00000100ffffff7f"
+      },
+      "hex": "48544131010130000000010000000000000000000000000080bb000004000000356c29d8723f0600000000000000000000000100ffffff7f"
+    },
+    {
+      "name": "stereo-44k1-2frames",
+      "frame": {
+        "source_index": 3,
+        "channel_count": 2,
+        "capture_epoch": 7,
+        "sequence": 123456789012,
+        "sample_rate": 44100,
+        "sample_count": 2,
+        "capture_timestamp_us": -5,
+        "start_sample": 9876543210,
+        "payload_hex": "008000010c00f4ff"
+      },
+      "hex": "48544131010130000300020007000000141a99be1c00000044ac000002000000fbffffffffffffffea16b04c02000000008000010c00f4ff"
+    },
+    {
+      "name": "mono-16k-large-counters",
+      "frame": {
+        "source_index": 65535,
+        "channel_count": 1,
+        "capture_epoch": 4294967295,
+        "sequence": 9007199254740991,
+        "sample_rate": 16000,
+        "sample_count": 1,
+        "capture_timestamp_us": -9007199254740991,
+        "start_sample": 9007199254740991,
+        "payload_hex": "3412"
+      },
+      "hex": "4854413101013000ffff0100ffffffffffffffffffff1f00803e000001000000010000000000e0ffffffffffffff1f003412"
+    }
+  ]
+}

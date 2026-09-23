@@ -1,0 +1,38 @@
+{
+  "$comment": "SYNTHETIC audio generated locally with Windows OneCore TTS voices (scripts/make_synthetic_audio.py). Not real speakers. Kazakh: no local Kazakh TTS voice on the build machine -> Kazakh/mixed audio checks are NOT_RUN until authorised real recordings are added (fixtures/audio/private, not in Git).",
+  "synthetic": true,
+  "generator": "Windows OneCore TTS (Microsoft Irina, Microsoft Pavel), 16 kHz mono PCM",
+  "items": [
+    {
+      "id": "ru_synth_dialog_b",
+      "language": "ru",
+      "scenario": "B (новые имена не используются; см. текстовые тесты)",
+      "turns": [
+        {"speaker": "A", "voice": "Microsoft Pavel", "text": "Ботагоз, по поставкам кабеля ситуация критическая. Пусть Ерлан до конца недели подготовит претензию, а вы за две недели найдите альтернативного поставщика.", "pause_after_s": 0.8},
+        {"speaker": "B", "voice": "Microsoft Irina", "text": "Хорошо, две недели мне хватит. Претензию Ерлан подготовит, я с ним свяжусь сегодня.", "pause_after_s": 0.9},
+        {"speaker": "A", "voice": "Microsoft Pavel", "text": "Договор пока не расторгаем. Если поставщик систематически нарушает сроки, тогда расторгаем.", "pause_after_s": 0.7},
+        {"speaker": "B", "voice": "Microsoft Irina", "text": "Поняла. Итак, с меня поставщик, с Ерлана претензия.", "pause_after_s": 0.5}
+      ]
+    },
+    {
+      "id": "ru_synth_dialog_a",
+      "language": "ru",
+      "scenario": "A (отклонённый срок, календарная дата)",
+      "turns": [
+        {"speaker": "A", "voice": "Microsoft Irina", "text": "Айгерим, нужно переаттестовать рабочие места на втором участке. Две недели достаточно?", "pause_after_s": 0.8},
+        {"speaker": "B", "voice": "Microsoft Pavel", "text": "Нет, за две недели не успеем, там одиннадцать площадок. Нужно три недели, то есть к пятнадцатому октября.", "pause_after_s": 0.8},
+        {"speaker": "A", "voice": "Microsoft Irina", "text": "Хорошо, три недели, до пятнадцатого октября. А смету за неделю дадите?", "pause_after_s": 0.7},
+        {"speaker": "B", "voice": "Microsoft Pavel", "text": "Да, смету дам за неделю.", "pause_after_s": 0.5}
+      ]
+    },
+    {
+      "id": "ru_synth_numbers_h",
+      "language": "ru",
+      "scenario": "H (числа и предположения)",
+      "turns": [
+        {"speaker": "A", "voice": "Microsoft Pavel", "text": "По итогам проверки: семьдесят один процент датчиков не проходили поверку, восемь процентов вышли из строя. Охват обучения составил шестьдесят процентов на одиннадцати площадках.", "pause_after_s": 0.8},
+        {"speaker": "B", "voice": "Microsoft Irina", "text": "В прошлом квартале было девяносто четыре процента, теперь шестьдесят восемь. Текучесть двенадцать процентов. Инструктажи, скорее всего, формальные.", "pause_after_s": 0.5}
+      ]
+    }
+  ]
+}

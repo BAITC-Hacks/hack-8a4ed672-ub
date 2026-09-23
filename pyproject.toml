@@ -1,0 +1,63 @@
+[project]
+name = "hattama-workspace"
+version = "0.1.0"
+description = "Workspace root (not installed as a package)"
+requires-python = ">=3.11,<3.13"
+dependencies = ["hattama", "hattama-contracts"]
+
+[project.optional-dependencies]
+asr = ["hattama[asr]"]
+diarization = ["hattama[diarization]"]
+prepare = ["hattama[prepare]"]
+cuda-win = ["hattama[cuda-win]"]
+agent = ["hattama-meeting-agent[browser]"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["apps/api", "packages/contracts/python", "apps/meeting-agent"]
+
+[tool.uv.sources]
+hattama = { workspace = true }
+hattama-contracts = { workspace = true }
+hattama-meeting-agent = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<10",
+  "ruff>=0.7",
+  "mypy>=1.13",
+  "types-python-dateutil",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["apps/api", "packages/contracts/python", "apps/meeting-agent", "tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "integration: needs the full local stack in-process (DB, API), no external services",
+  "models: needs prepared local models (ASR/LLM); skipped with explicit NOT_RUN reason otherwise",
+  "e2e: browser end-to-end (Playwright)",
+  "slow: long-running",
+]
+filterwarnings = ["ignore::DeprecationWarning:pyannote.*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["apps/web", "apps/extension", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "BLE", "RUF"]
+ignore = ["S101", "S311", "RUF001", "RUF002", "RUF003", "S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "BLE"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true
+packages = ["hattama", "hattama_contracts"]
