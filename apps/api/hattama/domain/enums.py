@@ -43,6 +43,7 @@ class LanguageMode(StrEnum):
 
 class CaptureMode(StrEnum):
     COMPANION = "companion"  # Chromium extension (tab audio + optional mic)
+    BROWSER_TAB = "browser_tab"  # dashboard display capture (tab audio + optional mic)
     LOCAL_MIC = "local_mic"  # microphone of this computer via the dashboard page
     BOT = "bot"  # self-hosted meeting-agent
     UPLOAD = "upload"  # audio/video file (additional input, not a replacement for live)

@@ -7,30 +7,49 @@ class PcmChunker extends AudioWorkletProcessor {
     this.buf = new Int16Array(this.chunkFrames);
     this.pos = 0;
     this.muted = false;
+    this.paused = false;
+    this.peak = 0;
     this.port.onmessage = (e) => {
       if (e.data && e.data.type === "mute") this.muted = !!e.data.muted;
+      if (e.data && e.data.type === "pause") {
+        this.paused = !!e.data.paused;
+        if (this.paused) this.flush();
+        this.port.postMessage({ type: "paused", paused: this.paused, requestId: e.data.requestId });
+      }
+      if (e.data && e.data.type === "flush") {
+        this.flush();
+        this.port.postMessage({ type: "flushed", requestId: e.data.requestId });
+      }
     };
   }
 
+  flush() {
+    if (!this.pos) return;
+    const pcm = this.buf.slice(0, this.pos);
+    this.port.postMessage({ type: "chunk", pcm: pcm.buffer, frames: this.pos, peak: this.peak }, [pcm.buffer]);
+    this.pos = 0;
+    this.peak = 0;
+  }
+
   process(inputs) {
+    if (this.paused) return true;
     const input = inputs[0];
     if (!input || input.length === 0) return true;
     const channels = input.length;
     const frames = input[0].length;
-    let peak = 0;
     for (let i = 0; i < frames; i++) {
       let s = 0;
       for (let c = 0; c < channels; c++) s += input[c][i];
       s = this.muted ? 0 : s / channels;
       const a = Math.abs(s);
-      if (a > peak) peak = a;
+      if (a > this.peak) this.peak = a;
       const v = Math.max(-1, Math.min(1, s));
       this.buf[this.pos++] = v < 0 ? v * 0x8000 : v * 0x7fff;
       if (this.pos === this.chunkFrames) {
-        this.port.postMessage({ type: "chunk", pcm: this.buf.buffer, frames: this.chunkFrames, peak }, [this.buf.buffer]);
+        this.port.postMessage({ type: "chunk", pcm: this.buf.buffer, frames: this.chunkFrames, peak: this.peak }, [this.buf.buffer]);
         this.buf = new Int16Array(this.chunkFrames);
         this.pos = 0;
-        peak = 0;
+        this.peak = 0;
       }
     }
     return true;

@@ -5,14 +5,13 @@ import time
 
 import numpy as np
 import pytest
-from sqlalchemy import func, select
-from starlette.websockets import WebSocketDisconnect
-
 from conftest import EXT_ID, WEB_ORIGIN, confirm_consent, create_meeting, login, make_user
 from hattama.db.models import AudioGap, CaptureSession, Job, Meeting, SourceEpoch
 from hattama.db.session import session_scope
 from hattama.ingest.store import read_pcm_range
 from helpers.ingest import EXT_ORIGIN, hello, pcm_frame, recv_until, source_open, wait_ack
+from sqlalchemy import func, select
+from starlette.websockets import WebSocketDisconnect
 
 pytestmark = pytest.mark.integration
 RATE = 48000
@@ -204,3 +203,112 @@ def test_pairing_requires_allowed_extension_origin(secretary) -> None:  # type: 
     # one-time code
     assert secretary.client.post("/api/v1/pairing/exchange", json={"code": code},
                                  headers={"origin": f"chrome-extension://{EXT_ID}"}).status_code == 401
+
+
+def test_browser_tab_cookie_capture_reports_both_sources_and_durable_audio(secretary):
+    mid = create_meeting(secretary)["id"]
+    confirm_consent(secretary, mid)
+    response = secretary.client.post(f"/api/v1/meetings/{mid}/capture-sessions", json={"mode": "browser_tab"},
+                                      headers=secretary.headers())
+    assert response.status_code == 201
+    cs = response.json()
+    assert cs["pairing"] is None
+    start_us = int(time.time() * 1e6)
+    with secretary.client.websocket_connect("/api/v1/ingest/ws", headers=secretary.ws_headers()) as ws:
+        ws.send_text(hello(capture_session_id=cs["id"]))
+        assert ws.receive_json()["type"] == "welcome"
+        for key, kind in (("tab", "tab_audio"), ("mic", "microphone")):
+            ws.send_text(source_open(key, kind, 16000, start_us=start_us))
+            idx = recv_until(ws, lambda m: m["type"] == "source_ready")["source_index"]
+            ws.send_bytes(pcm_frame(idx, 0, 0, _signal(1600, 3), rate=16000, start_us=start_us))
+            wait_ack(ws, 0)
+            ws.send_text(json.dumps({"type": "source_close", "source_index": idx, "capture_epoch": 0,
+                                     "final_sequence": 0, "reason": "stop_requested"}))
+            recv_until(ws, lambda m: m["type"] == "source_closed")
+        ws.send_text(json.dumps({"type": "stop_session", "reason": "user_stop"}))
+        recv_until(ws, lambda m: m["type"] == "session_stopped")
+    capture = secretary.client.get(f"/api/v1/meetings/{mid}/capture-sessions").json()[0]
+    assert capture["state"] == "STOPPED"
+    assert {s["kind"] for s in capture["sources"]} == {"tab_audio", "microphone"}
+    assert all(s["epochs"][0]["durable_seconds"] == 0.1 for s in capture["sources"])
+    state = secretary.client.get(f"/api/v1/meetings/{mid}/readiness").json()
+    assert state["processing"] and not state["can_approve"]
+
+
+def test_cancel_without_audio_returns_ready_and_can_restart(secretary):
+    mid = create_meeting(secretary)["id"]
+    confirm_consent(secretary, mid)
+    cs = secretary.client.post(f"/api/v1/meetings/{mid}/capture-sessions", json={"mode": "browser_tab"},
+                               headers=secretary.headers()).json()
+    stopped = secretary.client.post(f"/api/v1/capture-sessions/{cs['id']}/stop", headers=secretary.headers())
+    assert stopped.status_code == 200 and stopped.json()["state"] == "STOPPED"
+    assert secretary.client.get(f"/api/v1/meetings/{mid}").json()["status"] == "READY"
+    assert secretary.client.get(f"/api/v1/meetings/{mid}/readiness").json()["jobs"] == []
+    retry = secretary.client.post(f"/api/v1/meetings/{mid}/capture-sessions", json={"mode": "browser_tab"},
+                                   headers=secretary.headers())
+    assert retry.status_code == 201 and retry.json()["id"] != cs["id"]
+
+
+def test_stopping_capture_reconnect_drains_existing_source_only(secretary):
+    from hattama.ingest.service import request_stop
+
+    mid = create_meeting(secretary)["id"]
+    confirm_consent(secretary, mid)
+    cs = secretary.client.post(f"/api/v1/meetings/{mid}/capture-sessions", json={"mode": "browser_tab"},
+                               headers=secretary.headers()).json()
+    start_us = int(time.time() * 1e6)
+    with secretary.client.websocket_connect("/api/v1/ingest/ws", headers=secretary.ws_headers()) as ws:
+        ws.send_text(hello(capture_session_id=cs["id"]))
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_text(source_open("tab", "tab_audio", 16000, start_us=start_us))
+        idx = recv_until(ws, lambda m: m["type"] == "source_ready")["source_index"]
+        ws.send_bytes(pcm_frame(idx, 0, 0, _signal(1600, 1), rate=16000, start_us=start_us))
+        wait_ack(ws, 0)
+    with session_scope() as db:
+        request_stop(db, cs["id"], "user_stop", secretary.user_id, "web")
+    with secretary.client.websocket_connect("/api/v1/ingest/ws", headers=secretary.ws_headers()) as ws:
+        ws.send_text(hello(capture_session_id=cs["id"]))
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_text(source_open("new", "microphone", 16000, start_us=start_us))
+        assert recv_until(ws, lambda m: m["type"] == "error")["code"] == "session_stopping"
+        ws.send_text(source_open("tab", "tab_audio", 16000, start_us=start_us))
+        assert recv_until(ws, lambda m: m["type"] == "source_ready")["resume_from_sequence"] == 1
+        ws.send_bytes(pcm_frame(idx, 1, 1600, _signal(1600, 2), rate=16000, start_us=start_us))
+        wait_ack(ws, 1)
+        ws.send_text(json.dumps({"type": "source_close", "source_index": idx, "capture_epoch": 0,
+                                 "final_sequence": 1, "reason": "stop_requested"}))
+        recv_until(ws, lambda m: m["type"] == "session_stopped")
+    capture = secretary.client.get(f"/api/v1/meetings/{mid}/capture-sessions").json()[0]
+    assert capture["state"] == "STOPPED" and capture["sources"][0]["epochs"][0]["durable_seconds"] == 0.2
+
+
+def test_reconnect_after_lost_source_closed_ack_is_idempotent(secretary):
+    mid, cs_id, token = _pair(secretary)
+    start_us = int(time.time() * 1e6)
+    with secretary.client.websocket_connect("/api/v1/ingest/ws", headers={"origin": EXT_ORIGIN}) as ws:
+        ws.send_text(hello(token=token))
+        ws.receive_json()
+        ws.send_text(source_open(start_us=start_us))
+        idx = recv_until(ws, lambda m: m["type"] == "source_ready")["source_index"]
+        ws.send_bytes(pcm_frame(idx, 0, 0, _signal(CHUNK, 2), start_us=start_us))
+        wait_ack(ws, 0)
+        close = {"type": "source_close", "source_index": idx, "capture_epoch": 0,
+                 "final_sequence": 0, "reason": "stop_requested"}
+        ws.send_text(json.dumps(close))
+        recv_until(ws, lambda m: m["type"] == "source_closed")
+        ws.send_text(json.dumps(close))
+        assert recv_until(ws, lambda m: m["type"] == "source_closed")["durable_sequence"] == 0
+    # The browser did not persist the close acknowledgement and replays source_open after reconnect.
+    with secretary.client.websocket_connect("/api/v1/ingest/ws", headers={"origin": EXT_ORIGIN}) as ws:
+        ws.send_text(hello(token=token))
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_text(source_open(start_us=start_us))
+        assert recv_until(ws, lambda m: m["type"] == "source_ready")["resume_from_sequence"] == 1
+        assert recv_until(ws, lambda m: m["type"] == "source_closed")["durable_sequence"] == 0
+        ws.send_text(json.dumps(close))
+        assert recv_until(ws, lambda m: m["type"] == "source_closed")["durable_sequence"] == 0
+        ws.send_text(json.dumps({"type": "stop_session", "reason": "user_stop"}))
+        recv_until(ws, lambda m: m["type"] == "session_stopped")
+    with session_scope() as db:
+        assert db.get(CaptureSession, cs_id).state == "STOPPED"
+        assert db.scalar(select(func.count()).select_from(Job).where(Job.meeting_id == mid)) == 1

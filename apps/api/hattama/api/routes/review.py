@@ -6,6 +6,7 @@ from __future__ import annotations
 import struct
 from datetime import date, datetime
 from typing import Any, Literal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -25,6 +26,7 @@ from hattama.db.models import (
     CaptureSource,
     EvidenceSpan,
     ExportArtifact,
+    Job,
     Meeting,
     MeetingMember,
     Notification,
@@ -41,6 +43,7 @@ from hattama.db.models import (
 from hattama.db.types import utcnow
 from hattama.domain import meeting_status
 from hattama.domain.enums import MeetingStatus, ReviewState
+from hattama.domain.readiness import approval_readiness
 from hattama.export.protocol import build_snapshot, render_docx, render_pdf, snapshot_hash
 from hattama.jobs.queue import enqueue
 from hattama.services.events import audit
@@ -359,11 +362,20 @@ def history(meeting_id: str, user: User = Depends(current_user), db: Session = D
 @router.post("/meetings/{meeting_id}/retry-analysis", status_code=202)
 def retry_analysis(meeting_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     meeting = meeting_for(db, user, meeting_id, "edit")
-    if meeting.active_transcript_revision_id is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Нет финальной расшифровки")
+    if meeting.status not in (MeetingStatus.NEEDS_REVIEW, MeetingStatus.FAILED):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Повторный анализ доступен после завершения обработки")
+    if not approval_readiness(db, meeting)["transcript_ready"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Нет финальной расшифровки с распознанной речью")
+    pending = db.scalar(select(Job.id).where(Job.meeting_id == meeting_id, Job.kind == "extract_final",
+                                             Job.state.in_(["queued", "running"])).limit(1))
+    if pending:
+        return {"job_id": pending}
+    retry_id = uuid4().hex
     job = enqueue(db, kind="extract_final", key=f"extract_final:{meeting_id}:{meeting.active_transcript_revision_id}:"
-                                               f"retry:{int(utcnow().timestamp())}",
-                  meeting_id=meeting_id, payload={"revision_id": meeting.active_transcript_revision_id})
+                                               f"retry:{retry_id}",
+                  meeting_id=meeting_id, payload={"revision_id": meeting.active_transcript_revision_id,
+                                                  "retry_id": retry_id})
+    meeting_status.transition(db, meeting_id, MeetingStatus.PROCESSING)
     return {"job_id": job.id}
 
 
@@ -372,24 +384,34 @@ class ApproveIn(BaseModel):
     version: int
 
 
+@router.get("/meetings/{meeting_id}/readiness")
+def readiness(meeting_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    meeting = meeting_for(db, user, meeting_id, "read")
+    result = approval_readiness(db, meeting)
+    if member_role(db, meeting_id, user.id) != "secretary":
+        result["can_approve"] = False
+        result["reasons"].append("Утвердить протокол может секретарь встречи")
+    return result
+
+
 @router.post("/meetings/{meeting_id}/approve")
 def approve(meeting_id: str, body: ApproveIn, user: User = Depends(current_user),
             db: Session = Depends(get_db)) -> dict[str, Any]:
     meeting = meeting_for(db, user, meeting_id, "approve")
     if meeting.version != body.version:
         raise HTTPException(status.HTTP_409_CONFLICT, "Протокол изменился; обновите страницу перед утверждением")
-    if meeting.status != MeetingStatus.NEEDS_REVIEW:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Утверждение недоступно в статусе {meeting.status}")
-    blockers = db.scalar(select(func.count()).select_from(ReviewIssue).where(
-        ReviewIssue.meeting_id == meeting_id, ReviewIssue.status == "open", ReviewIssue.severity == "blocker")) or 0
-    if blockers:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"Есть {blockers} нерешённых блокирующих вопросов")
+    ready = approval_readiness(db, meeting)
+    if not ready["can_approve"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, "; ".join(ready["reasons"]))
     snap = build_snapshot(db, meeting)
     snap["meeting"]["status"] = MeetingStatus.APPROVED
     approval = ProtocolApproval(meeting_id=meeting_id, protocol_version=meeting.protocol_version, snapshot=snap,
                                 snapshot_sha256=snapshot_hash(snap), approved_by=user.id)
     db.add(approval)
-    meeting_status.transition(db, meeting_id, MeetingStatus.APPROVED, only_from={MeetingStatus.NEEDS_REVIEW})
+    if not meeting_status.transition(db, meeting_id, MeetingStatus.APPROVED,
+                                     only_from={MeetingStatus.NEEDS_REVIEW}):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Протокол изменился; обновите страницу")
+    db.flush()
     audit(db, action="protocol.approved", actor_user_id=user.id, meeting_id=meeting_id, object_type="meeting",
           object_id=meeting_id, after={"protocol_version": meeting.protocol_version, "sha256": approval.snapshot_sha256})
     return {"approval_id": approval.id, "protocol_version": meeting.protocol_version,

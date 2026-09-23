@@ -1,5 +1,6 @@
 import { api, session, user } from './api.js';
 import { esc, icon, avatar, tone, time, date, today, platform, status, execution, deadline, bucket, empty, toast, modal, busy } from './ui.js';
+import { recordingPanel, bindRecordingPanel, recordingBanner } from './recording-ui.js';
 
 const app = document.getElementById('app');
 let generation = 0, cleanup = () => {};
@@ -8,7 +9,7 @@ const meetingPath = m => `#/m/${m.id}`;
 const button = (label, glyph, attrs = '', cls = '') => `<button class="button ${cls}" ${attrs}>${glyph ? icon(glyph) : ''}${label}</button>`;
 const options = (map, value) => Object.entries(map).map(([v, label]) => `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(label)}</option>`).join('');
 const back = () => `<a class="back-link" href="#/meetings">${icon('back')}Все встречи</a>`;
-function render(html, cls = '') { app.className = cls; app.innerHTML = html; }
+function render(html, cls = '') { app.className = cls; app.innerHTML = recordingBanner() + html; }
 function shell() {
   const hash = location.hash; const tasks = hash.startsWith('#/actions');
   document.getElementById('header').innerHTML = `<a class="brand" href="#/meetings"><span class="brand-icon">${icon('logo')}</span>Хаттама</a>
@@ -51,6 +52,16 @@ async function viewMeetings(token) {
 function createMeeting() {
   const d = modal('Новая встреча', `<form id="meeting-form" class="form-stack"><label>Название встречи<input name="title" placeholder="Например, планёрка команды" maxlength="300" required autofocus></label><div class="form-grid"><label>Дата<input type="date" name="meeting_date" value="${today()}" required></label><label>Время<input type="time" name="start_time"></label></div><div class="form-grid"><label>Платформа<select name="platform">${options({ in_person: 'Очная встреча', google_meet: 'Google Meet', teams_web: 'Microsoft Teams', zoom_web: 'Zoom', other: 'Другое' }, 'in_person')}</select></label><label>Язык<select name="language_mode">${options({ mixed: 'Русский + қазақша', ru: 'Русский', kk: 'Қазақша' }, 'mixed')}</select></label></div><label>Часовой пояс<input name="timezone" value="Asia/Almaty" required></label><label>Участники<textarea name="participants" rows="3" placeholder="Имя; должность; email&#10;Добавьте (я) к своему имени"></textarea><small class="muted">По одному в строке. Email связывает исполнителя с его аккаунтом.</small></label><p class="form-error error" role="alert"></p><div class="dialog-actions">${button('Отмена', '', 'type="button" data-cancel')}${button('Создать встречу', 'plus', 'type="submit"', 'primary')}</div></form>`);
   d.querySelector('[data-cancel]').onclick = () => d.close();
+  const platformSelect = d.querySelector('[name="platform"]');
+  platformSelect.closest('.form-grid').insertAdjacentHTML('afterend', '<label id="meeting-url-field" hidden>Ссылка на встречу<input name="meeting_url" type="url" maxlength="2000" placeholder="https://meet.google.com/abc-defg-hij"><small class="muted">Откройте эту встречу в браузере. Хаттама запишет звук выбранной вкладки.</small></label>');
+  const updatePlatform = () => {
+    const online = ['google_meet', 'zoom_web', 'teams_web'].includes(platformSelect.value);
+    const field = d.querySelector('#meeting-url-field'); field.hidden = !online;
+    field.querySelector('input').required = online;
+    field.querySelector('input').disabled = !online;
+    field.querySelector('input').placeholder = platformSelect.value === 'zoom_web' ? 'https://zoom.us/j/123456789' : platformSelect.value === 'teams_web' ? 'https://teams.microsoft.com/l/meetup-join/…' : 'https://meet.google.com/abc-defg-hij';
+  };
+  platformSelect.onchange = updatePlatform; updatePlatform();
   d.querySelector('form').onsubmit = e => {
     e.preventDefault(); const fd = new FormData(e.target);
     busy(e.submitter, async () => {
@@ -60,7 +71,7 @@ function createMeeting() {
           const [name, position, email] = line.split(';').map(x => x.trim());
           return { display_name: name.replace('(я)', '').trim(), position: position || null, user_email: email || null, is_self: name.includes('(я)') };
         });
-        const m = await api('POST', '/meetings', { title: fd.get('title').trim(), meeting_date: fd.get('meeting_date'), start_time: fd.get('start_time') || null, timezone: fd.get('timezone'), language_mode: fd.get('language_mode'), platform: fd.get('platform'), participants });
+        const m = await api('POST', '/meetings', { title: fd.get('title').trim(), meeting_date: fd.get('meeting_date'), start_time: fd.get('start_time') || null, timezone: fd.get('timezone'), language_mode: fd.get('language_mode'), platform: fd.get('platform'), meeting_url: fd.get('meeting_url')?.trim() || null, participants });
         d.close(); location.hash = `#/m/${m.id}`;
       } catch (error) { err.textContent = error.message; }
     });
@@ -100,14 +111,14 @@ async function viewActions(token) {
 }
 
 async function viewProtocol(id, token) {
-  const [m, transcript, actions, issues, summary] = await Promise.all([
+  const [m, transcript, actions, issues, summary, captures, readiness] = await Promise.all([
     api('GET', `/meetings/${id}`), api('GET', `/meetings/${id}/transcript`), api('GET', `/meetings/${id}/actions`),
     api('GET', `/meetings/${id}/issues`), api('GET', `/meetings/${id}/summary`),
+    api('GET', `/meetings/${id}/capture-sessions`), api('GET', `/meetings/${id}/readiness`),
   ]);
   if (token !== generation) return;
   const editable = m.my_role === 'secretary' && m.status === 'NEEDS_REVIEW';
   const openIssues = issues.filter(i => i.status === 'open');
-  const blockers = openIssues.filter(i => i.severity === 'blocker');
   const totalMs = transcript.segments.reduce((end, s) => Math.max(end, s.end_ms), 0);
   const summaryLabels = { decisions: 'Решения', facts: 'Факты и показатели', assumptions: 'Предположения', risks: 'Риски', open_questions: 'Открытые вопросы' };
   const summaryHtml = Object.entries(summaryLabels).map(([key, label]) => {
@@ -116,15 +127,14 @@ async function viewProtocol(id, token) {
   }).join('');
   const speakerRows = transcript.speakers.filter(s => !s.merged_into).map(s => ({ ...s, name: s.binding?.status === 'confirmed' && s.binding?.name ? s.binding.name : s.label, duration: transcript.segments.filter(x => x.speaker_id === s.id).reduce((sum, x) => sum + Math.max(0, x.end_ms - x.start_ms), 0) }));
   const maxDuration = Math.max(1, ...speakerRows.map(s => s.duration));
-  render(`${back()}<div class="protocol-heading"><div><div class="title-line"><h1>${esc(m.title)}</h1>${status(m.status)}</div><p class="muted">${date(m.meeting_date)}${m.start_time ? ` · ${esc(m.start_time)}` : ''}${totalMs ? ` · ${Math.ceil(totalMs / 60000)} мин` : ''} · ${esc(platform(m.platform))}</p></div><div class="protocol-actions">${button('Транскрипт', 'text', 'id="transcript"')}${button('Скачать', 'download', 'id="download"')}${editable ? button('Утвердить', 'check', `id="approve" ${blockers.length ? 'disabled title="Сначала решите блокирующие вопросы"' : ''}`, 'primary') : ''}</div></div>
-  ${['DRAFT', 'READY'].includes(m.status) ? `<div class="notice">${icon('info')}<div><strong>Встреча создана</strong><p>Протокол и поручения появятся после обработки записи.</p></div></div>` : ''}
-  ${m.status === 'PROCESSING' ? `<div class="notice blue">${icon('clock')}<div><strong>Готовим протокол</strong><p>Распознаём речь и выделяем решения и поручения. Страница обновится автоматически.</p></div></div>` : ''}
-  ${m.status === 'FAILED' ? `<div class="notice red">${icon('info')}<div><strong>Обработка не завершилась</strong><p>Проверьте состояние локальных моделей и воркеров.</p></div></div>` : ''}
+  render(`${back()}<div class="protocol-heading"><div><div class="title-line"><h1>${esc(m.title)}</h1>${status(m.status)}</div><p class="muted">${date(m.meeting_date)}${m.start_time ? ` · ${esc(m.start_time)}` : ''}${totalMs ? ` · ${Math.ceil(totalMs / 60000)} мин` : ''} · ${esc(platform(m.platform))}</p></div><div class="protocol-actions">${button('Транскрипт', 'text', 'id="transcript"')}${button('Скачать', 'download', `id="download" ${!readiness.summary_ready ? 'disabled title="Сначала дождитесь итогов встречи"' : ''}`)}${editable ? button('Утвердить', 'check', `id="approve" ${!readiness.can_approve ? `disabled title="${esc(readiness.reasons.join('. '))}"` : ''}`, 'primary') : ''}</div></div>
+  ${recordingPanel(m, captures, readiness)}
   <div class="protocol-overview"><section class="panel summary-panel"><h2>Итоги</h2>${summaryHtml || empty('Итоги ещё не готовы', 'Здесь появятся основные решения и факты из встречи.', 'text')}</section><section class="panel people-panel"><div class="section-heading"><h2>${speakerRows.length ? 'Кто говорил' : 'Участники'}</h2><span class="muted">${speakerRows.length || m.participants.length}</span></div><div class="speaker-list">${speakerRows.length ? speakerRows.map(s => `<div class="speaker-row">${avatar(s.name)}<span class="grow">${esc(s.name)}</span>${s.binding?.status === 'confirmed' || !editable ? `<meter class="speaker-meter" min="0" max="${maxDuration}" value="${s.duration}" aria-label="Время речи ${esc(s.name)}"></meter><small>${time(s.duration)}</small>` : `<button class="button compact" data-speaker="${s.id}">Кто это?</button>`}</div>`).join('') : m.participants.map(p => `<div class="speaker-row">${avatar(p.display_name)}<span class="grow">${esc(p.display_name)}<small class="muted">${esc(p.position || (p.is_self ? 'Это вы' : 'Участник'))}${p.is_present ? '' : ' · отсутствует'}</small></span></div>`).join('') || '<p class="muted">Участники не указаны.</p>'}</div></section></div>
   <section><div class="section-heading"><h2>Поручения <span class="muted number">${actions.length}</span></h2>${actions.length ? '<a class="text-link" href="#/actions">Все поручения →</a>' : ''}</div><div class="sticky-grid">${actions.map(a => actionCard(a, { sticky: true, editable, meeting: true })).join('') || `<div class="panel full-width">${empty('Поручений пока нет', 'После анализа здесь будут задачи с исполнителями и сроками.', 'tasks')}</div>`}</div></section>
   ${openIssues.length ? `<section class="panel issues-panel"><h2>Нужно уточнить <span class="badge amber">${openIssues.length}</span></h2>${openIssues.map(i => `<div class="issue-row"><span class="issue-symbol ${i.severity === 'blocker' ? 'red' : 'amber'}">${icon('info')}</span><div class="grow"><strong>${esc(i.question)}</strong><small class="muted">${i.severity === 'blocker' ? 'Нужно решить до утверждения' : 'Требует внимания'}</small></div>${editable ? `<button class="button compact" data-resolve="${i.id}">Уточнить</button>` : ''}</div>`).join('')}</section>` : ''}
   <div class="protocol-footer"><span>${icon('shield')}Версия протокола ${m.protocol_version} · ${m.status === 'APPROVED' ? 'Утверждено' : 'Черновик'}</span>${m.my_role === 'secretary' && m.status === 'APPROVED' ? button('Создать новую версию', 'edit', 'id="new-version"') : ''}</div>`, 'page protocol-page');
   bindActionControls(app, actions, m);
+  cleanup = bindRecordingPanel(m, captures, readiness, route);
   document.getElementById('transcript').onclick = () => openTranscript(m, transcript);
   app.querySelectorAll('[data-evidence]').forEach(b => b.onclick = () => {
     const a = actions.find(a => a.id === b.dataset.evidence); openTranscript(m, transcript, a.evidence.find(e => e.start_ms != null), a);
@@ -151,10 +161,6 @@ async function viewProtocol(id, token) {
     const d = modal('Кто говорил?', `<form class="form-stack"><label>Участник<select name="participant_id" required><option value="">Выберите участника</option>${m.participants.map(p => `<option value="${p.id}">${esc(p.display_name)}</option>`).join('')}</select></label>${button('Подтвердить', 'check', 'type="submit"', 'primary')}</form>`);
     d.querySelector('form').onsubmit = e => { e.preventDefault(); const participant_id = new FormData(e.target).get('participant_id'); busy(e.submitter, async () => { await api('POST', `/speakers/${b.dataset.speaker}/binding`, { participant_id }); d.close(); await route(); }); };
   });
-  if (['LIVE', 'PROCESSING'].includes(m.status)) {
-    const poll = setInterval(async () => { try { const fresh = await api('GET', `/meetings/${id}`); if (token === generation && fresh.status !== m.status) await route(); } catch { /* The next poll retries; session expiration is handled by api(). */ } }, 5000);
-    cleanup = () => clearInterval(poll);
-  }
 }
 
 function editAction(a, m) {

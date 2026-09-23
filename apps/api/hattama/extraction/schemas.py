@@ -30,8 +30,8 @@ class _Strict(BaseModel):
 class LlmEvent(_Strict):
     # Field order matters for generation: grounding quote first, then the abstraction.
     type: EventType
-    segment: str = Field(pattern=r"^S\d{1,4}$", description="сегмент, где произошло событие")
-    task: str = Field(pattern=r"^(T|N)\d{1,3}$", description="T<n> — существующая задача, N<n> — новая")
+    segment: str = Field(pattern=r"^S[0-9]{1,4}$", description="сегмент, где произошло событие")
+    task: str = Field(pattern=r"^(T|N)[0-9]{1,3}$", description="T<n> — существующая задача, N<n> — новая")
     action_quote: str | None = Field(default=None, max_length=200, description="точные слова о самой задаче")
     action: str | None = Field(default=None, max_length=200, description="что сделать, в инфинитиве; только для новой задачи")
     assignee: str | None = Field(default=None, max_length=120)
@@ -39,7 +39,7 @@ class LlmEvent(_Strict):
     assignee_quote: str | None = Field(default=None, max_length=160)
     deadline_quote: str | None = Field(default=None, max_length=160, description="точная формулировка срока")
     condition_quote: str | None = Field(default=None, max_length=240)
-    parent: str | None = Field(default=None, pattern=r"^(T|N)\d{1,3}$")
+    parent: str | None = Field(default=None, pattern=r"^(T|N)[0-9]{1,3}$")
     curator: str | None = Field(default=None, max_length=120)
     assigner: str | None = Field(default=None, max_length=120)
     collaborators: list[str] = Field(default_factory=list, max_length=5)
@@ -54,7 +54,7 @@ class LlmEventsOut(_Strict):
 
 class LlmSummaryItem(_Strict):
     category: Literal["fact", "decision", "assumption", "risk", "open_question"]
-    segment: str = Field(pattern=r"^S\d{1,4}$")
+    segment: str = Field(pattern=r"^S[0-9]{1,4}$")
     quote: str = Field(max_length=300)
     text: str = Field(max_length=240)
 
