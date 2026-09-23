@@ -3,22 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Хаттама Live</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#F4F5F7">
+  <title>Хаттама — протоколы встреч</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header>
-    <a href="#/meetings" class="brand">Хаттама Live</a>
-    <nav id="nav" hidden>
-      <a href="#/meetings">Встречи</a>
-      <a href="#/actions">Поручения</a>
-      <a href="#/notifications">Уведомления</a>
-      <a href="#/diagnostics">Диагностика</a>
-      <button id="logout" class="link">Выйти</button>
-    </nav>
-  </header>
-  <main id="app" tabindex="-1"><p>Загрузка…</p></main>
-  <footer>Все модели работают локально. Записи и тексты не отправляются во внешние сервисы ИИ.</footer>
-  <script type="module" src="app.js"></script>
+  <a class="skip-link" href="#app">К содержимому</a>
+  <header id="header" class="site-header"></header>
+  <main id="app" tabindex="-1"><div class="loading" role="status">Загружаем рабочее пространство…</div></main>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -148,7 +148,7 @@ def bind_speaker(speaker_id: str, body: BindingIn, user: User = Depends(current_
 
 
 # ---------------------------------------------------------------- actions
-def action_out(db: Session, a: ActionItem, today: date | None = None) -> dict[str, Any]:
+def action_out(db: Session, a: ActionItem, today: date | None = None, *, user: User | None = None) -> dict[str, Any]:
     ev = [{"field": e.field, "segment_id": e.segment_id, "quote": e.quote, "start_ms": e.start_ms,
            "end_ms": e.end_ms, "match": e.match}
           for e in db.scalars(select(EvidenceSpan).where(EvidenceSpan.action_id == a.id,
@@ -160,7 +160,9 @@ def action_out(db: Session, a: ActionItem, today: date | None = None) -> dict[st
             "conditional": a.conditional, "dependencies": a.dependencies, "parent_id": a.parent_id, "topic": a.topic,
             "review_state": a.review_state, "execution_state": a.execution_state, "on_hold": a.on_hold,
             "review_reasons": a.review_reasons, "origin": a.origin, "version": a.version, "evidence": ev,
-            "overdue": is_overdue(a, today)}
+            "overdue": is_overdue(a, today),
+            "can_update_execution": can_update_execution(db, user, a) if user else False,
+            "can_view_meeting": member_role(db, a.meeting_id, user.id) is not None if user else False}
 
 
 def is_overdue(a: ActionItem, today: date | None = None) -> bool:
@@ -182,7 +184,7 @@ def meeting_actions(meeting_id: str, include_rejected: bool = False, user: User 
     stmt = select(ActionItem).where(ActionItem.meeting_id == meeting_id).order_by(ActionItem.number)
     if not include_rejected:
         stmt = stmt.where(ActionItem.review_state != ReviewState.REJECTED)
-    return [action_out(db, a) for a in db.scalars(stmt)]
+    return [action_out(db, a, user=user) for a in db.scalars(stmt)]
 
 
 class ActionPatch(BaseModel):
@@ -262,7 +264,7 @@ def patch_action(action_id: str, body: ActionPatch, user: User = Depends(current
     from hattama.notifications.scheduler import reschedule
 
     reschedule(db, a)
-    return action_out(db, a)
+    return action_out(db, a, user=user)
 
 
 class ExecutionPatch(BaseModel):
@@ -284,7 +286,7 @@ def set_execution(action_id: str, body: ExecutionPatch, user: User = Depends(cur
     from hattama.notifications.scheduler import reschedule
 
     reschedule(db, a)
-    return action_out(db, a)
+    return action_out(db, a, user=user)
 
 
 @router.get("/actions")
@@ -302,7 +304,7 @@ def registry(scope: Literal["mine", "all"] = "all", overdue_only: bool = False, 
     for a in db.scalars(stmt.order_by(ActionItem.created_at.desc()).limit(500)):
         if a.meeting_id and db.get(Meeting, a.meeting_id).deleted_at is not None:  # type: ignore[union-attr]
             continue
-        item = action_out(db, a)
+        item = action_out(db, a, user=user)
         item["meeting_title"] = db.get(Meeting, a.meeting_id).title  # type: ignore[union-attr]
         if not overdue_only or item["overdue"]:
             out.append(item)
