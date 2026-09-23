@@ -63,7 +63,8 @@ def segment_views(session: Session, revision_id: str, limit_last: int | None = N
     for i, seg in enumerate(segs):
         spk = speakers.get(seg.speaker_id or "")
         bound = bindings.get(seg.speaker_id or "")
-        label = spk.label if spk else ("Микрофон" if seg.source_key in ("mic", "microphone") else "Говорящий")
+        # neutral label: a source name like "Звук встречи" must not look like a person to the LLM
+        label = "Говорящий не определён" if not bound else spk.label if spk else "Говорящий не определён"
         views.append(SegmentView(id=seg.id, alias=f"S{i + 1}", text=seg.text, start_ms=seg.start_ms, end_ms=seg.end_ms,
                                  revision_id=revision_id, speaker_label=label,
                                  speaker_name=bound.display_name if bound else None,

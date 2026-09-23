@@ -24,6 +24,8 @@ from hattama.extraction.schemas import LlmEvent
 
 AGREED, PROPOSED, REJECTED = "agreed", "proposed", "rejected"
 # meta-phrases a small model sometimes writes instead of the task content
+NOT_A_PERSON = {"звук встречи", "говорящий не определен", "говорящий", "микрофон", "микрофон вы", "неизвестно",
+                "не указан", "unknown"}
 CREATING_TYPES = ("assign", "propose", "conditional", "suspend", "restate")
 GENERIC_ACTIONS = ("поставить задачу", "согласиться", "повторить", "решение с условием", "принять", "отказаться",
                    "отменить", "приостановить", "задача", "поручение", "выполнить задачу", "условное решение",
@@ -154,7 +156,7 @@ class Linker:
         return [verify(quote, alias, self.ctx.segments, self.ctx.ordered)]
 
     def _assignee_value(self, e: LlmEvent) -> dict[str, Any] | None:
-        if not e.assignee:
+        if not e.assignee or norm(e.assignee) in NOT_A_PERSON:
             return None
         kind = e.assignee_kind or assignee_kind(e.assignee)
         if kind == "person" and assignee_kind(e.assignee) == "department":

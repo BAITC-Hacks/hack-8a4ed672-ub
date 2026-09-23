@@ -32,7 +32,8 @@ SENTENCE_END = (".", "?", "!", "…")
 # Well-known Whisper hallucinations on silence/noise (subtitle credits etc.). Segments containing them are
 # FLAGGED for review, never silently deleted: the phrase might have really been said.
 HALLUCINATION_MARKERS = ("продолжение следует", "субтитры", "спасибо за просмотр", "редактор субтитров",
-                         "подписывайтесь на канал", "dimatorzok", "amara.org")
+                         "подписывайтесь на канал", "dimatorzok", "amara.org", "we'll be right back",
+                         "thank you for watching", "thanks for watching", "please subscribe")
 SPEECH_PAD_S = 0.2
 
 
